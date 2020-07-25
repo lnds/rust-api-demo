@@ -4,9 +4,10 @@ mod handlers;
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| {
+    let app_data = handlers::AppState::load_data("../data.csv");
+    HttpServer::new(move || {
         App::new()
-            .data(handlers::AppState::load_data(""))
+            .data(app_data.clone())
             .route("/", web::get().to(handlers::index))
             .route("/api/{id}", web::get().to(handlers::api))
     })
