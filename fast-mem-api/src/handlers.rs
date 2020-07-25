@@ -1,6 +1,7 @@
-use actix_web::{web, Responder, HttpResponse};
+use actix_web::{Error, web, Responder, HttpRequest, HttpResponse};
+use futures::future::{ready, Ready};
 use rand::{thread_rng, Rng};
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use csv::ReaderBuilder;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -10,9 +11,38 @@ pub struct AppState {
     app_data: HashMap<usize, u8>,
 }
 
+#[derive(Serialize)]
+pub struct ResponseObj {
+    id: usize,
+    value: Option<u8>,
+}
+
+impl Responder for ResponseObj {
+    type Error = Error;
+    type Future = Ready<Result<HttpResponse, Error>>;
+
+    fn respond_to(self, _req: &HttpRequest) -> Self::Future {
+        let body = serde_json::to_string(&self).unwrap();
+        match self.value {
+            Some(_) => ready(Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .body(body))),
+            None => ready(Ok(HttpResponse::NotFound()
+                .content_type("application/json")
+                .body(body)))
+        }
+        // Create response and set content type
+
+    }
+
+}
+
 pub async fn index(data: web::Data<AppState>) -> impl Responder {
-    let random_id : usize = thread_rng().gen_range(0, data.app_data.len());
-    HttpResponse::Ok().body(format!("Random data, id = {}, value = {}", random_id, data.app_data[&random_id]))
+    let id : usize = thread_rng().gen_range(0, data.app_data.len());
+    ResponseObj {
+        id,
+        value: data.app_data.get(&id).cloned(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -22,11 +52,10 @@ pub struct ApiParams {
 
 
 pub async fn api(param: web::Path<ApiParams>, data: web::Data<AppState>) -> impl Responder {
-    if data.app_data.contains_key(&param.id) {
-        HttpResponse::Ok().body(format!("Data for {} is {}", param.id, data.app_data[&param.id]))
-    } else {
-        HttpResponse::NotFound().body(format!("no data for id: {}", param.id))
-    }
+        ResponseObj {
+            id: param.id,
+            value: data.app_data.get(&param.id).cloned()
+        }
 }
 
 #[derive(Debug, Deserialize)]
