@@ -5,10 +5,12 @@ use serde::{Serialize, Deserialize};
 use csv::ReaderBuilder;
 use std::collections::HashMap;
 use std::time::Instant;
+use std::sync::Mutex;
 
-#[derive(Clone)]
+
+
 pub struct AppState {
-    app_data: HashMap<usize, u8>,
+    app_data: Mutex<HashMap<usize, u8>>,
 }
 
 #[derive(Serialize)]
@@ -38,10 +40,10 @@ impl Responder for ResponseObj {
 }
 
 pub async fn index(data: web::Data<AppState>) -> impl Responder {
-    let id : usize = thread_rng().gen_range(0, data.app_data.len());
+    let id : usize = thread_rng().gen_range(0, data.app_data.lock().unwrap().len());
     ResponseObj {
         id,
-        value: data.app_data.get(&id).cloned(),
+        value: data.app_data.lock().unwrap().get(&id).cloned(),
     }
 }
 
@@ -54,7 +56,7 @@ pub struct ApiParams {
 pub async fn api(param: web::Path<ApiParams>, data: web::Data<AppState>) -> impl Responder {
         ResponseObj {
             id: param.id,
-            value: data.app_data.get(&param.id).cloned()
+            value: data.app_data.lock().unwrap().get(&param.id).cloned()
         }
 }
 
@@ -68,17 +70,18 @@ impl AppState {
     pub fn load_data(_filename: &str) -> AppState {
         let start = Instant::now();
         println!("loading data from {}", _filename);
-        let mut data = AppState{
-            app_data: HashMap::new()
-        };
+        let mut data =  HashMap::new();
+
         let mut reader = ReaderBuilder::new().from_path(_filename).unwrap();
         for row in reader.deserialize() {
 
             let record : Record = row.unwrap();
-            data.app_data.insert(record.id, record.value);
+            data.insert(record.id, record.value);
         }
         let end = Instant::now();
         println!("data loaded in {:?}", end.duration_since(start));
-        data
+        AppState {
+            app_data: Mutex::new(data)
+        }
     }
 }
