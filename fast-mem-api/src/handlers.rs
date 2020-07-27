@@ -14,6 +14,7 @@ pub struct AppState {
 
 #[derive(Serialize)]
 pub struct Stats {
+    db_size: usize,
     total_requests: u64,
     id_requests: u64,
 }
@@ -60,6 +61,7 @@ impl AppState {
 
     fn stats(&self) -> Stats {
         Stats {
+            db_size: self.len(),
             total_requests: *self.total_request.lock().unwrap(),
             id_requests: *self.id_requests.lock().unwrap(),
         }
