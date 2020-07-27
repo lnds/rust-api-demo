@@ -1,44 +1,65 @@
+use super::db::{load_data, DataBase, Record};
 use actix_web::{web, Error, HttpRequest, HttpResponse, Responder};
-use csv::ReaderBuilder;
 use futures::future::{ready, Ready};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::Instant;
-
-#[derive(Clone, Serialize)]
-pub struct AppData {
-    value: u8,
-    count: u64,
-}
+use std::sync::{Mutex, RwLock};
 
 pub struct AppState {
-    app_data: Mutex<HashMap<usize, AppData>>,
+    app_data: RwLock<DataBase>,
 }
+
+#[derive(Serialize)]
+pub struct Stats {
+    total_requests: u64,
+    id_requests: u64,
+}
+
 
 impl AppState {
+    pub fn load(filename: &str) -> Self {
+        let db = load_data(filename);
+        AppState {
+            app_data: RwLock::new(db),
+        }
+    }
 
     fn len(&self) -> usize {
-       self.app_data.lock().unwrap().len()
+        self.app_data.read().unwrap().len()
     }
 
-    fn access(&self, id: &usize) -> Option<AppData> {
-        {
-            let mut app_data = self.app_data.lock().unwrap();
-            if let Some(data) = app_data.get_mut(&id) {
-                data.count += 1;
-                return Some((*data).clone());
+    fn access(&self, id: &usize) -> Option<Record> {
+        let mut app_data = self.app_data.write().unwrap();
+        if let Some(data) = app_data.get_mut(&id) {
+            data.count += 1;
+            return Some((*data).clone());
+        } else {
+            return None;
+        }
+    }
+
+    fn stats(&self) -> Stats {
+        let mut total_requests = 0;
+        let mut id_requests = 0;
+        let app_data = &self.app_data.read().unwrap();
+        for id in app_data.keys() {
+            let v = &app_data[&id];
+            total_requests += v.count;
+            if v.count > 0 {
+                id_requests += 1;
             }
         }
-       self.app_data.lock().unwrap().get(id).cloned()
+        Stats {
+            total_requests,
+            id_requests
+        }
     }
-
 }
+
 #[derive(Serialize)]
 pub struct ResponseObj {
     id: usize,
-    data: Option<AppData>,
+    data: Option<Record>,
 }
 
 impl Responder for ResponseObj {
@@ -73,44 +94,14 @@ pub struct ApiParams {
 }
 
 pub async fn api(param: web::Path<ApiParams>, data: web::Data<AppState>) -> impl Responder {
-    ResponseObj {
+     ResponseObj {
         id: param.id,
         data: data.access(&param.id),
     }
 }
 
-/*
-pub async fn stat(data: web::Data<AppState>) -> Responder {
 
-}
-*/
-#[derive(Debug, Deserialize)]
-struct Record {
-    id: usize,
-    value: u8,
-}
-
-impl AppState {
-    pub fn load_data(_filename: &str) -> AppState {
-        let start = Instant::now();
-        println!("loading data from {}", _filename);
-        let mut data = HashMap::new();
-
-        let mut reader = ReaderBuilder::new().from_path(_filename).unwrap();
-        for row in reader.deserialize() {
-            let record: Record = row.unwrap();
-            data.insert(
-                record.id,
-                AppData {
-                    value: record.value,
-                    count: 0,
-                },
-            );
-        }
-        let end = Instant::now();
-        println!("data loaded in {:?}", end.duration_since(start));
-        AppState {
-            app_data: Mutex::new(data),
-        }
-    }
+pub async fn stat(data: web::Data<AppState>) -> impl Responder {
+    let body = serde_json::to_string(&data.stats()).unwrap();
+    HttpResponse::Ok().content_type("application/json").body(body)
 }
