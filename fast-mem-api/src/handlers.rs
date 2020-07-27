@@ -3,10 +3,13 @@ use actix_web::{web, Error, HttpRequest, HttpResponse, Responder};
 use futures::future::{ready, Ready};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
-use std::sync::{Mutex, RwLock};
+use std::time::{Instant};
+use std::sync::{RwLock, Mutex};
 
 pub struct AppState {
     app_data: RwLock<DataBase>,
+    total_request: Mutex<u64>,
+    id_requests: Mutex<u64>,
 }
 
 #[derive(Serialize)]
@@ -21,6 +24,8 @@ impl AppState {
         let db = load_data(filename);
         AppState {
             app_data: RwLock::new(db),
+            total_request: Mutex::new(0),
+            id_requests: Mutex::new(0),
         }
     }
 
@@ -32,26 +37,31 @@ impl AppState {
         let mut app_data = self.app_data.write().unwrap();
         if let Some(data) = app_data.get_mut(&id) {
             data.count += 1;
+            self.inc_requests();
+            if data.count == 1 {
+                self.inc_id_requests();
+            }
             return Some((*data).clone());
         } else {
+            self.inc_requests();
             return None;
         }
     }
 
+    fn inc_requests(&self) {
+        let mut total_requests = self.total_request.lock().unwrap();
+        *total_requests += 1;
+    }
+
+    fn inc_id_requests(&self) {
+        let mut id_requests = self.id_requests.lock().unwrap();
+        *id_requests += 1;
+    }
+
     fn stats(&self) -> Stats {
-        let mut total_requests = 0;
-        let mut id_requests = 0;
-        let app_data = &self.app_data.read().unwrap();
-        for id in app_data.keys() {
-            let v = &app_data[&id];
-            total_requests += v.count;
-            if v.count > 0 {
-                id_requests += 1;
-            }
-        }
         Stats {
-            total_requests,
-            id_requests
+            total_requests: *self.total_request.lock().unwrap(),
+            id_requests: *self.id_requests.lock().unwrap(),
         }
     }
 }
@@ -60,6 +70,7 @@ impl AppState {
 pub struct ResponseObj {
     id: usize,
     data: Option<Record>,
+    elapsed: String
 }
 
 impl Responder for ResponseObj {
@@ -81,10 +92,12 @@ impl Responder for ResponseObj {
 }
 
 pub async fn index(data: web::Data<AppState>) -> impl Responder {
+    let start = Instant::now();
     let id: usize = thread_rng().gen_range(0, data.len());
     ResponseObj {
         id,
         data: data.access(&id),
+        elapsed: format!("{:?}", Instant::now().duration_since(start))
     }
 }
 
@@ -94,14 +107,40 @@ pub struct ApiParams {
 }
 
 pub async fn api(param: web::Path<ApiParams>, data: web::Data<AppState>) -> impl Responder {
-     ResponseObj {
+    let start = Instant::now();
+    ResponseObj {
         id: param.id,
         data: data.access(&param.id),
+        elapsed: format!("{:?}", Instant::now().duration_since(start))
+    }
+}
+
+
+
+#[derive(Serialize)]
+pub struct StatObj {
+    data: Stats,
+    elapsed: String
+}
+
+
+impl Responder for StatObj {
+    type Error = Error;
+    type Future = Ready<Result<HttpResponse, Error>>;
+
+    fn respond_to(self, _req: &HttpRequest) -> Self::Future {
+        let body = serde_json::to_string(&self).unwrap();
+        ready(Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .body(body)))
     }
 }
 
 
 pub async fn stat(data: web::Data<AppState>) -> impl Responder {
-    let body = serde_json::to_string(&data.stats()).unwrap();
-    HttpResponse::Ok().content_type("application/json").body(body)
+    let start = Instant::now();
+    StatObj {
+        data: data.stats(),
+        elapsed: format!("{:?}", Instant::now().duration_since(start))
+    }
 }
